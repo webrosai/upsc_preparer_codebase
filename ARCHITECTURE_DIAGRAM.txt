@@ -1,0 +1,486 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                    UPSC PREPARER - AUTHENTICATION ARCHITECTURE                 ║
+╚════════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          COMPLETE SYSTEM OVERVIEW                               │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+                                    USER
+                                     │
+                ┌────────────────────┼────────────────────┐
+                │                    │                    │
+           [SIGN-UP]            [SIGN-IN]            [DASHBOARD]
+           (Public)             (Public)            (Protected)
+                │                    │                    │
+                └────────────────────┼────────────────────┘
+                                     │
+                            ┌────────▼────────┐
+                            │  SUPABASE       │
+                            │  (Backend)      │
+                            └─────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           AUTHENTICATION FLOW                                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+SIGN-UP FLOW:
+─────────────────────────────────────────────────────────────────────────────────
+
+  [Sign-Up Form Page]
+       │
+       │ User fills: name, contact, state, city, email, password
+       │
+       ▼
+  [Client Validation]
+       │
+       │ • All fields required
+       │ • Password >= 6 chars
+       │ • Passwords match
+       │ • Valid email format
+       │
+       ▼
+  [Send to Supabase Auth]
+       │
+       │ supabase.auth.signUp({
+       │   email,
+       │   password,
+       │   options.data: { name, contact, state, city }
+       │ })
+       │
+       ├─────────────────────────────────────────┐
+       │                                         │
+       ▼                                         ▼
+  [auth.users]                           [public.users]
+  ──────────────                          ──────────────
+  • id (UUID)                             • id (FK)
+  • email                                 • email (PK)
+  • encrypted_password                    • name
+  • raw_user_meta_data                    • contact_number
+  • confirmed_at                          • state
+       │                                  • city
+       │                                  • created_at
+       │                                         │
+       └─────────────────────────────────────────┘
+                        │
+                        ▼
+           [Confirmation Email Sent]
+                        │
+                User clicks link
+                        │
+                        ▼
+             [Email Marked Confirmed]
+                        │
+              Account is now ACTIVE
+                        │
+                        ▼
+           [Redirect to Success Page]
+
+
+SIGN-IN FLOW:
+─────────────────────────────────────────────────────────────────────────────────
+
+  [Login Form Page]
+       │
+       │ User enters: email, password
+       │
+       ▼
+  [Send to Supabase Auth]
+       │
+       │ supabase.auth.signInWithPassword({
+       │   email,
+       │   password
+       │ })
+       │
+       ├─────────────────────────────────┐
+       │                                 │
+       ▼                                 ▼
+  [Check auth.users]          [Validate Password Hash]
+       │                                 │
+       │ • Email exists?                 │ • Hash matches?
+       │ • Confirmed?                    │
+       │                                 │
+       └─────────────────────────────────┘
+                        │
+          ┌─────────────┴─────────────┐
+          │                           │
+      SUCCESS                      FAILURE
+          │                           │
+          ▼                           ▼
+     [Create Session]        [Show Error Message]
+          │
+          ▼
+  [Redirect to Dashboard]
+          │
+          ├──────────────────────────────────┐
+          │                                  │
+          ▼                                  ▼
+   [Fetch from public.users]      [Display Profile Data]
+          │                                  │
+          │ SELECT * WHERE                   │
+          │ email = user.email               ├─ Name
+          │                                  ├─ Email
+          ▼                                  ├─ Contact
+   [Get User Profile]                ├─ State
+          │                                  ├─ City
+          │                                  │
+          └──────────────────────────────────┘
+                        │
+                        ▼
+              [Show "Login Successfully!"]
+                        │
+                        ▼
+              [Dashboard Ready]
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         DATABASE SCHEMA DIAGRAM                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+SUPABASE INSTANCE
+    │
+    ├─ auth schema (Supabase managed)
+    │   │
+    │   └─ users table (auth.users)
+    │       ├── id: UUID [PK]
+    │       ├── email: TEXT [UNIQUE]
+    │       ├── encrypted_password: TEXT
+    │       ├── raw_user_meta_data: JSONB
+    │       │   └─ { name, contact_number, state, city }
+    │       ├── confirmed_at: TIMESTAMP
+    │       └── created_at: TIMESTAMP
+    │
+    └─ public schema (Our app)
+        │
+        └─ users table (public.users)
+            ├── id: UUID [PK, FK→auth.users(id)]
+            ├── email: TEXT [UNIQUE] ← PRIMARY KEY FOR LOGIN
+            ├── name: TEXT
+            ├── contact_number: TEXT
+            ├── state: TEXT
+            ├── city: TEXT
+            ├── created_at: TIMESTAMP
+            │
+            └─ RLS Policies
+                ├─ SELECT: auth.uid() = id
+                ├─ INSERT: auth.uid() = id
+                ├─ UPDATE: auth.uid() = id
+                └─ DELETE: auth.uid() = id
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        DATA STORAGE LOCATIONS                                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+SUPABASE PORTAL ACCESS:
+──────────────────────────
+
+Supabase Dashboard
+│
+├─ [Authentication] section
+│  │
+│  └─ [Users] tab
+│     │
+│     └─ auth.users TABLE
+│        ├─ Email
+│        ├─ Confirmation status
+│        ├─ Created date
+│        └─ (Click user) → Raw metadata
+│            └─ { name, contact_number, state, city }
+│
+├─ [SQL Editor] section
+│  │
+│  └─ [Schemas] → [public]
+│     │
+│     └─ [Tables] → [users]
+│        │
+│        └─ public.users TABLE
+│           ├─ id (UUID)
+│           ├─ email (PRIMARY KEY)
+│           ├─ name
+│           ├─ contact_number
+│           ├─ state
+│           ├─ city
+│           └─ created_at
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    FORM FIELDS → DATABASE MAPPING                               │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          SIGN-UP FORM                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Full Name            → public.users.name                                    │
+│ Contact Number       → public.users.contact_number                          │
+│ State                → public.users.state                                   │
+│ City                 → public.users.city                                    │
+│ Email Address        → auth.users.email + public.users.email ⭐ (PRIMARY) │
+│ Password             → auth.users.encrypted_password                        │
+│ Confirm Password     → (validation only, not stored)                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        EMAIL AS PRIMARY KEY                                      │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+Why Email?
+──────────
+
+┌─────────────────────────────────────┐
+│ Email = Username = Unique ID        │
+├─────────────────────────────────────┤
+│ ✅ One email = One account          │
+│ ✅ Used for login                   │
+│ ✅ Verified via confirmation        │
+│ ✅ Contact method for account       │
+│ ✅ Matches UPSC norms               │
+│ ✅ Stored in BOTH auth.users        │
+│    and public.users as UNIQUE       │
+└─────────────────────────────────────┘
+
+EXAMPLE:
+────────
+Sign-up:   john@example.com (enter in form)
+Login:     john@example.com (enter on login page)
+Database:  PK in public.users: email = 'john@example.com'
+Auth:      UNIQUE in auth.users: email = 'john@example.com'
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                      APPLICATION ROUTES & PROTECTION                            │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+PUBLIC ROUTES:
+──────────────
+/auth/sign-up        → Anyone can access
+                        ├─ Submit form
+                        └─ Create account
+
+/auth/login          → Anyone can access
+                        ├─ Enter email + password
+                        └─ Authenticate
+
+/auth/sign-up-success → Anyone can access
+                        └─ See success message
+
+
+PROTECTED ROUTES:
+─────────────────
+/dashboard           → ✅ Requires Authentication
+                        ├─ Check session
+                        ├─ Fetch user profile
+                        ├─ Show "Login Successfully!"
+                        └─ Display user information
+
+
+MIDDLEWARE:
+───────────
+middleware.ts        → Runs on every request
+                        ├─ Checks authentication
+                        ├─ Sets session cookies
+                        ├─ Refreshes tokens
+                        └─ Protects routes
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         SECURITY LAYERS                                         │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+LAYER 1: CLIENT VALIDATION
+──────────────────────────
+  Sign-up form checks:
+  ├─ All fields required
+  ├─ Valid email format
+  ├─ Password >= 6 characters
+  ├─ Passwords match
+  └─ Contact is numeric
+
+
+LAYER 2: SUPABASE VALIDATION
+────────────────────────────
+  During sign-up:
+  ├─ Email uniqueness
+  ├─ Enforce constraints
+  └─ Store data securely
+
+  During sign-in:
+  ├─ Email exists check
+  ├─ Password hash verification
+  ├─ Confirmation status check
+  └─ Session creation
+
+
+LAYER 3: PASSWORD SECURITY
+──────────────────────────
+  ├─ Client: Never send plain text
+  ├─ Transport: HTTPS encrypted
+  ├─ Server: Bcrypt hashing
+  └─ Storage: Encrypted password hash only
+
+
+LAYER 4: EMAIL CONFIRMATION
+───────────────────────────
+  ├─ Account inactive until confirmed
+  ├─ Confirmation link emailed
+  ├─ Verified before login possible
+  └─ Prevents fake/wrong emails
+
+
+LAYER 5: SESSION MANAGEMENT
+───────────────────────────
+  ├─ HTTP-only cookies
+  ├─ Secure flag (HTTPS only)
+  ├─ SameSite policy (CSRF protection)
+  ├─ Auto token refresh
+  └─ Middleware-based verification
+
+
+LAYER 6: ROW LEVEL SECURITY
+───────────────────────────
+  ├─ Users see only their data
+  ├─ Queries filtered by auth.uid()
+  ├─ Unauthorized access blocked
+  └─ Database-level enforcement
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                    EXAMPLE: COMPLETE DATA RECORD                                │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+After John Doe signs up, confirms email, and logs in:
+
+IN auth.users (Supabase Auth Table):
+────────────────────────────────────
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "john@example.com",
+  "encrypted_password": "$2a$10$...[bcrypt hash]...",
+  "raw_user_meta_data": {
+    "name": "John Doe",
+    "contact_number": "9876543210",
+    "state": "Maharashtra",
+    "city": "Mumbai"
+  },
+  "confirmed_at": "2024-03-09T10:30:00.000Z",
+  "created_at": "2024-03-09T10:30:00.000Z"
+}
+
+IN public.users (Custom Profile Table):
+─────────────────────────────────────────
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "john@example.com",
+  "name": "John Doe",
+  "contact_number": "9876543210",
+  "state": "Maharashtra",
+  "city": "Mumbai",
+  "created_at": "2024-03-09T10:30:00.000Z"
+}
+
+ON DASHBOARD (What User Sees):
+───────────────────────────────
+✅ Login Successfully! Welcome back, John Doe!
+
+User Profile:
+├─ Email: john@example.com
+├─ Contact: 9876543210
+├─ State: Maharashtra
+└─ City: Mumbai
+
+[Logout Button]
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                         FILES & ORGANIZATION                                    │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+PROJECT STRUCTURE:
+──────────────────
+
+app/
+├── auth/
+│   ├── layout.tsx                    ← Auth layout wrapper
+│   ├── sign-up/
+│   │   └── page.tsx                  ← 📝 Sign-up form with 7 fields
+│   ├── login/
+│   │   └── page.tsx                  ← 🔓 Login form (email + password)
+│   ├── sign-up-success/
+│   │   └── page.tsx                  ← ✅ Success message page
+│   └── error/
+│       └── page.tsx                  ← ❌ Error handling page
+│
+├── dashboard/
+│   └── page.tsx                      ← 🔐 Protected dashboard (shows login success!)
+│
+└── layout.tsx
+
+lib/supabase/
+├── client.ts                         ← 🌐 Browser-side Supabase client
+├── server.ts                         ← 🖥️ Server-side Supabase client
+└── proxy.ts                          ← 🔄 Session management proxy
+
+middleware.ts                         ← 🛡️ Auth middleware for all routes
+
+scripts/
+└── 001_add_user_profile_columns.sql  ← 🗄️ Database migration (executed)
+
+DOCUMENTATION:
+───────────────
+├── QUICK_START.md                    ← ⚡ 5-minute quick start
+├── DATABASE_SCHEMA.md                ← 📊 Database structure reference
+├── SUPABASE_SETUP.md                 ← 🔧 Supabase portal guide
+├── IMPLEMENTATION_GUIDE.md           ← 📚 Complete technical guide
+├── README_AUTHENTICATION.md          ← 📖 Full overview
+├── DATA_STORAGE_SUMMARY.txt          ← 📋 Quick reference (text)
+└── ARCHITECTURE_DIAGRAM.txt          ← 📐 This file (visual)
+
+
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                      QUICK VERIFICATION CHECKLIST                               │
+└─────────────────────────────────────────────────────────────────────────────────┘
+
+✅ SIGN-UP TEST
+  [ ] Navigate to /auth/sign-up
+  [ ] Fill all 7 form fields
+  [ ] Submit form
+  [ ] See "Account Created!" message
+  [ ] Check email for confirmation
+
+✅ EMAIL CONFIRMATION TEST
+  [ ] Click confirmation link in email
+  [ ] Email marked as confirmed in Supabase
+
+✅ LOGIN TEST
+  [ ] Navigate to /auth/login
+  [ ] Enter email + password
+  [ ] Click "Sign In"
+  [ ] Redirected to /dashboard
+
+✅ DASHBOARD TEST
+  [ ] See "Login Successfully!" message
+  [ ] Profile shows correct name
+  [ ] All 4 location fields visible
+  [ ] Email is correct
+  [ ] Logout button present
+
+✅ SUPABASE VERIFICATION
+  [ ] Auth → Users: See your email
+  [ ] Click user: See metadata
+  [ ] SQL Editor → users table: See profile
+  [ ] Run query: Check data matches
+
+✅ LOGOUT TEST
+  [ ] Click Logout button
+  [ ] Redirected to /auth/login
+  [ ] Cannot access /dashboard
+
+═════════════════════════════════════════════════════════════════════════════════
+
+🎉 COMPLETE AUTHENTICATION SYSTEM IS READY!
+
+START HERE: http://localhost:3000/auth/sign-up
+
+═════════════════════════════════════════════════════════════════════════════════
